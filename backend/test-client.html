@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MikroTik Bridge Diagnostic</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; max-width: 600px; margin: 0 auto; }
+        .form-group { margin-bottom: 10px; }
+        label { display: inline-block; width: 100px; }
+        input { padding: 5px; width: 200px; }
+        button { padding: 10px 20px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px; }
+        #status { margin-top: 20px; padding: 10px; border-radius: 4px; border: 1px solid #ccc; }
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        #log { margin-top: 20px; border-top: 1px solid #eee; padding-top: 10px; font-family: monospace; font-size: 12px; }
+    </style>
+</head>
+<body>
+    <h2>MikroTik Bridge Diagnostic</h2>
+    <div class="form-group">
+        <label>Host:</label>
+        <input id="host" value="10.5.50.1">
+    </div>
+    <div class="form-group">
+        <label>Username:</label>
+        <input id="user" value="api-user">
+    </div>
+    <div class="form-group">
+        <label>Password:</label>
+        <input id="pass" value="REDACTED">
+    </div>
+    <div class="form-group">
+        <label>Port:</label>
+        <input id="port" value="443">
+    </div>
+    <button id="connectBtn" onclick="connect()">Test Connection</button>
+    
+    <div id="status">Ready to connect...</div>
+    <div id="log"></div>
+
+    <script>
+        const ws = new WebSocket('ws://localhost:8080');
+        const pending = new Map();
+
+        function createRequestId() {
+            return Date.now().toString(16) + Math.random().toString(16).slice(2);
+        }
+
+        function sendRequest(action, payload) {
+            const id = createRequestId();
+            return new Promise((resolve, reject) => {
+                const timeoutId = setTimeout(() => {
+                    pending.delete(id);
+                    reject(new Error('Request timed out: ' + action));
+                }, 15000);
+                pending.set(id, { resolve, reject, timeoutId });
+                ws.send(JSON.stringify({ id, action, payload }));
+            });
+        }
+
+        ws.onopen = async () => {
+            log('WebSocket Connected to Backend Bridge');
+            document.getElementById('status').innerText = 'Backend Bridge Connected. Ready to test Router.';
+            try {
+                const hello = await sendRequest('bridge.hello', { client: 'test-client', protocol: '2.0' });
+                log('Bridge ready: ' + JSON.stringify(hello));
+            } catch (error) {
+                log('Bridge hello failed: ' + error.message);
+            }
+        };
+        
+        ws.onerror = () => {
+            log('WebSocket Error. Is backend running?');
+            document.getElementById('status').className = 'error';
+            document.getElementById('status').innerText = 'Backend Bridge Connection Failed';
+        };
+
+        ws.onmessage = (e) => {
+            const data = JSON.parse(e.data);
+            log('RX: ' + JSON.stringify(data));
+
+            if (data.type === 'event') {
+                return;
+            }
+
+            const pendingRequest = pending.get(data.id);
+            if (!pendingRequest) return;
+
+            clearTimeout(pendingRequest.timeoutId);
+            pending.delete(data.id);
+
+            if (data.ok) {
+                pendingRequest.resolve(data.payload);
+            } else {
+                pendingRequest.reject(new Error(data.error?.message || 'Request failed'));
+            }
+        };
+
+        async function connect() {
+            const host = document.getElementById('host').value;
+            const user = document.getElementById('user').value;
+            const pass = document.getElementById('pass').value;
+            const port = parseInt(document.getElementById('port').value, 10);
+            
+            log('Sending connect request to ' + host + ':' + port);
+            document.getElementById('status').innerText = 'Connecting to router...';
+
+            try {
+                const result = await sendRequest('router.connect', {
+                    host,
+                    username: user,
+                    password: pass,
+                    port: port,
+                    tls: false
+                });
+                document.getElementById('status').className = 'success';
+                document.getElementById('status').innerText = 'SUCCESS: Connected to ' + result.host;
+            } catch (error) {
+                document.getElementById('status').className = 'error';
+                document.getElementById('status').innerText = 'FAILURE: ' + error.message;
+            }
+        }
+
+        function log(msg) {
+            const div = document.createElement('div');
+            div.innerText = new Date().toLocaleTimeString() + ': ' + msg;
+            document.getElementById('log').appendChild(div);
+            console.log(msg);
+        }
+    </script>
+</body>
+</html>

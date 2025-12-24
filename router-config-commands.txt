@@ -1,0 +1,32 @@
+# MikroTik Router Configuration Commands
+# Run these commands on your MikroTik router to enable API access
+
+# 1. Enable API services
+# Enable standard API (for backend connection)
+/ip service set api disabled=no port=8728
+# Enable REST API (optional, for browser direct access)
+/ip service set www-ssl disabled=no port=443
+
+# 2. Create API user (if not already done)
+/user add name=api-user group=full password=REDACTED
+
+# 3. Add firewall rule to allow API connections from your network
+/ip firewall filter add chain=input protocol=tcp dst-port=443 action=accept place-before=0 \
+  comment="Allow HTTPS API access" src-address=192.168.1.0/24
+
+# 4. Enable SSL certificate (use self-signed if no proper cert)
+/certificate add name=devnet-cert common-name=devnet days-valid=3650
+/certificate sign devnet-cert
+/ip service set www-ssl certificate=devnet-cert
+
+# 5. Enable hotspot if needed
+/ip hotspot profile set [ find default=yes ] html-directory=hotspot
+
+# 6. Check current configuration
+/ip service print
+/user print
+/ip firewall filter print
+/certificate print
+
+# 7. Test connectivity (run from another device on same network)
+# curl -k https://10.5.50.1/rest/system/resource -u api-user:REDACTED
